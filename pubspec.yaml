@@ -1,0 +1,31 @@
+name: resq
+description: ResQ disaster emergency and survival companion
+publish_to: 'none'
+version: 1.0.0+1
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.2
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  http: ^1.6.0
+  sensors_plus: ^6.1.0
+  light: ^4.0.0
+  local_auth: ^2.3.0
+  shared_preferences: ^2.3.2
+  crypto: ^3.0.6
+  intl: ^0.19.0
+  geolocator: ^13.0.1
+  uuid: ^4.5.1
+  connectivity_plus: ^7.3.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+flutter:
+  uses-material-design: true
