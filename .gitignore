@@ -48,3 +48,10 @@ app.*.map.json
 .env
 .env.*
 !.env.example
+# Konfigurasi lokal VS Code
+.vscode/
+
+# Hasil build Android
+android/build/
+
+supabase/.temp/
