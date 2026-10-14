@@ -1,19 +1,45 @@
 import 'package:flutter/material.dart';
-import 'package:local_auth/local_auth.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../providers/app_provider.dart';
+import '../services/biometric_login_service.dart';
 import '../widgets/resq_widgets.dart';
 import 'main_screen.dart';
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool _checkingLock = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeLock();
+  }
+
+  Future<void> _initializeLock() async {
+    final provider = context.read<AppProvider>();
+
+    await provider.initializeLockState();
+
+    if (mounted) {
+      setState(() => _checkingLock = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<AuthState>(
       stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (_checkingLock ||
+            snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(
               child: CircularProgressIndicator(color: resqOrange),
@@ -21,13 +47,17 @@ class AuthGate extends StatelessWidget {
           );
         }
 
-        final user = Supabase.instance.client.auth.currentUser;
+        return Consumer<AppProvider>(
+          builder: (context, provider, child) {
+            final user = Supabase.instance.client.auth.currentUser;
 
-        if (user != null) {
-          return const MainScreen();
-        }
+            if (user != null && !provider.appLocked) {
+              return const MainScreen();
+            }
 
-        return const AuthScreen();
+            return const AuthScreen();
+          },
+        );
       },
     );
   }
@@ -89,7 +119,6 @@ class _AuthScreenState extends State<AuthScreen> {
 
         setState(() {
           _register = false;
-          _error = null;
           _success = 'Pendaftaran berhasil. Silakan masuk dengan akunmu.';
           _password.clear();
         });
@@ -98,12 +127,12 @@ class _AuthScreenState extends State<AuthScreen> {
           email: _email.text.trim(),
           password: _password.text,
         );
+
+        await context.read<AppProvider>().unlockWithPassword();
       }
     } on AuthException catch (e) {
       if (mounted) {
-        setState(() {
-          _error = e.message;
-        });
+        setState(() => _error = e.message);
       }
     } catch (e) {
       if (mounted) {
@@ -112,41 +141,57 @@ class _AuthScreenState extends State<AuthScreen> {
               'Terjadi kesalahan. Periksa koneksi dan konfigurasi Supabase.';
         });
       }
+      debugPrint('Proses autentikasi gagal: $e');
     } finally {
       if (mounted) {
-        setState(() {
-          _busy = false;
-        });
+        setState(() => _busy = false);
       }
     }
   }
 
   Future<void> _biometric() async {
-    try {
-      final auth = LocalAuthentication();
+    if (_busy) return;
 
-      if (!await auth.canCheckBiometrics && !await auth.isDeviceSupported()) {
-        setState(() {
-          _error = 'Perangkat tidak mendukung autentikasi biometrik.';
-        });
+    setState(() {
+      _busy = true;
+      _error = null;
+      _success = null;
+    });
+
+    try {
+      final service = BiometricLoginService();
+
+      if (!await service.isEnabled()) {
+        if (mounted) {
+          setState(() {
+            _error =
+                'Login biometrik belum aktif. Masuk dengan email dan kata sandi, lalu aktifkan di profil.';
+          });
+        }
         return;
       }
 
-      final ok = await auth.authenticate(
-        localizedReason: 'Verifikasi identitas untuk membuka ResQ',
-      );
+      final success = await context.read<AppProvider>().biometricLogin();
 
-      if (ok && mounted) {
+      if (!mounted) return;
+
+      if (!success) {
         setState(() {
           _error =
-              'Biometrik berhasil diverifikasi. Masuk dengan akun email terlebih dahulu pada prototipe ini.';
+              'Verifikasi dibatalkan. Silakan coba lagi atau masuk manual.';
         });
       }
-    } catch (_) {
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _error =
+            'Login biometrik gagal. Silakan masuk dengan email dan kata sandi.';
+      });
+      debugPrint('Login biometrik gagal: $e');
+    } finally {
       if (mounted) {
-        setState(() {
-          _error = 'Biometrik belum tersedia atau belum diatur pada perangkat.';
-        });
+        setState(() => _busy = false);
       }
     }
   }
@@ -231,9 +276,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             onPressed: () {
-                              setState(() {
-                                _obscure = !_obscure;
-                              });
+                              setState(() => _obscure = !_obscure);
                             },
                             icon: Icon(
                               _obscure
@@ -278,6 +321,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 setState(() {
                                   _register = !_register;
                                   _error = null;
+                                  _success = null;
                                 });
                               },
                         child: Text(
@@ -286,17 +330,21 @@ class _AuthScreenState extends State<AuthScreen> {
                               : 'Belum punya akun? Daftar',
                         ),
                       ),
-                      OutlinedButton.icon(
-                        onPressed: _biometric,
-                        icon: const Icon(Icons.fingerprint),
-                        label: const Text('Verifikasi biometrik'),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size.fromHeight(48),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                      if (!_register) ...[
+                        const Divider(height: 24),
+                        OutlinedButton.icon(
+                          onPressed: _busy ? null : _biometric,
+                          icon: const Icon(Icons.fingerprint),
+                          label: const Text('Masuk dengan biometrik'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                            foregroundColor: resqBlue,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
