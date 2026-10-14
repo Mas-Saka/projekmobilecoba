@@ -1,20 +1,49 @@
-# ResQ — Flutter prototype
+# ResQ — Flutter Prototype
 
-Prototype modular ResQ app with Firebase Auth/Firestore, OpenStreetMap, BMKG earthquake feed, report hashing, survival mini-game, local profile data, and sensor-trigger simulation.
+ResQ adalah prototype aplikasi tanggap bencana berbasis Flutter yang memiliki fitur autentikasi, pelaporan, peta lokasi, informasi gempa BMKG, profil pengguna, permainan edukasi bertahan hidup, dan simulasi sensor.
 
-## Run
-1. Install Flutter stable and run `flutter pub get`.
-2. Create a Firebase project. Enable Email/Password in Authentication and create Firestore.
-3. Run `dart pub global activate flutterfire_cli` then `flutterfire configure` from this directory. This generates `lib/firebase_options.dart`.
-4. In `lib/main.dart`, uncomment the `firebase_options.dart` import and replace `Firebase.initializeApp()` with `Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)`.
-5. Run `flutter run`.
+## Teknologi
 
-Without Firebase configuration, the app intentionally does not silently pretend cloud login/reporting works. Configure Firebase before testing authentication and report submission.
+- Flutter dan Dart
+- Supabase untuk autentikasi dan layanan backend
+- OpenStreetMap untuk peta
+- BMKG untuk informasi gempa
+- SHA-256 untuk sidik jari integritas laporan
 
-## Platform notes
-- Add Android internet permission if missing: `<uses-permission android:name="android.permission.INTERNET"/>` in `android/app/src/main/AndroidManifest.xml`.
-- For location access, add platform location permissions and request them before using GPS. The map currently uses a safe default center and demo shelter markers.
-- Sensor monitoring is foreground-oriented. Android background sensor execution requires a foreground service and platform-specific lifecycle/permission work; this prototype does not claim to run reliably after the OS kills/suspends the app.
-- A phone's light sensor can be absent or unavailable. Developer Override is provided for demonstrations.
-- SHA-256 is an integrity fingerprint, not blockchain and not proof that a report is true. Timestamp/location hashing can be recomputed by a malicious client; production systems should hash server-side and apply verification/moderation.
-- Never rely on this prototype as a sole emergency alert system. Verify local emergency information independently.
+## Persiapan
+
+1. Instal Flutter stable dan pastikan Flutter dapat dijalankan.
+2. Jalankan `flutter pub get` untuk memasang dependensi.
+3. Buat proyek Supabase dan siapkan konfigurasi autentikasi serta database sesuai kebutuhan aplikasi.
+4. Buat file `.env` di direktori utama proyek berdasarkan `.env.example`.
+5. Isi variabel lingkungan pada `.env` dengan konfigurasi yang sesuai.
+
+Contoh struktur `.env`:
+
+```env
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=
+GEMINI_API_KEY=
+```
+
+Jangan masukkan nilai API key asli ke README atau commit Git. File `.env` harus tetap dikecualikan melalui `.gitignore`. Gunakan hanya kunci Supabase yang memang aman untuk aplikasi klien; jangan pernah menaruh `service_role` key di aplikasi Flutter.
+
+## Menjalankan Aplikasi
+
+Setelah konfigurasi selesai, jalankan:
+
+```bash
+flutter pub get
+flutter run
+```
+
+Pastikan konfigurasi Supabase dan layanan terkait sudah benar sebelum menguji fitur yang memerlukan backend.
+
+## Catatan Platform
+
+- **Internet:** Pastikan izin internet tersedia pada konfigurasi Android di `android/app/src/main/AndroidManifest.xml`.
+- **Lokasi dan peta:** Tambahkan izin lokasi pada platform terkait dan minta izin pengguna sebelum mengakses GPS. Peta dapat menggunakan titik pusat default dan penanda shelter demo.
+- **Sensor:** Pemantauan sensor berorientasi pada aplikasi yang sedang berjalan. Eksekusi sensor di latar belakang Android memerlukan foreground service serta pengaturan siklus hidup dan izin khusus platform.
+- **Sensor cahaya:** Tidak semua perangkat memiliki sensor cahaya atau menyediakan akses ke sensor tersebut. Developer Override tersedia untuk demonstrasi.
+- **Integritas laporan:** SHA-256 merupakan sidik jari integritas, bukan blockchain dan bukan bukti bahwa laporan benar. Data yang di-hash oleh klien dapat dimanipulasi; sistem produksi sebaiknya melakukan hashing di server serta menerapkan verifikasi dan moderasi.
+- **Keselamatan:** Jangan mengandalkan prototype ini sebagai satu-satunya sistem peringatan darurat. Verifikasi informasi darurat melalui sumber resmi setempat.

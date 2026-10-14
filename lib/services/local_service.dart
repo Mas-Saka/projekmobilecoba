@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class LocalService {
   static const _medicalKey = 'resq_medical_profile';
@@ -29,7 +30,7 @@ class LocalService {
 }
 
 class AiService {
-  static const String _apiKey = 'isi api';
+  static String get _apiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
 
   static const String _model = 'gemini-3.5-flash-lite';
 

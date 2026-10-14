@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
-import 'firebase_options.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'providers/app_provider.dart';
 import 'screens/auth_screen.dart';
 import 'widgets/resq_widgets.dart';
@@ -9,24 +10,33 @@ import 'widgets/resq_widgets.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  var firebaseReady = false;
+  var supabaseReady = false;
 
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    firebaseReady = true;
+    await dotenv.load(fileName: '.env');
+
+    final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
+    final supabasePublishableKey = dotenv.env['SUPABASE_PUBLISHABLE_KEY'] ?? '';
+
+    if (supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty) {
+      await Supabase.initialize(
+        url: supabaseUrl,
+        publishableKey: supabasePublishableKey,
+      );
+
+      supabaseReady = true;
+    }
   } catch (e) {
-    debugPrint('Firebase gagal diinisialisasi: $e');
+    debugPrint('Supabase gagal diinisialisasi: $e');
   }
 
-  runApp(ResQApp(firebaseReady: firebaseReady));
+  runApp(ResQApp(supabaseReady: supabaseReady));
 }
 
 class ResQApp extends StatelessWidget {
-  const ResQApp({super.key, required this.firebaseReady});
+  const ResQApp({super.key, required this.supabaseReady});
 
-  final bool firebaseReady;
+  final bool supabaseReady;
 
   @override
   Widget build(BuildContext context) {
@@ -51,14 +61,14 @@ class ResQApp extends StatelessWidget {
             centerTitle: false,
           ),
         ),
-        home: firebaseReady ? const AuthGate() : const FirebaseSetupScreen(),
+        home: supabaseReady ? const AuthGate() : const SupabaseSetupScreen(),
       ),
     );
   }
 }
 
-class FirebaseSetupScreen extends StatelessWidget {
-  const FirebaseSetupScreen({super.key});
+class SupabaseSetupScreen extends StatelessWidget {
+  const SupabaseSetupScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +95,7 @@ class FirebaseSetupScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 22),
                 const Text(
-                  'ResQ perlu konfigurasi Firebase',
+                  'ResQ perlu konfigurasi Supabase',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 22,
@@ -95,7 +105,8 @@ class FirebaseSetupScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Periksa konfigurasi Firebase dan koneksi aplikasi, '
+                  'Pastikan SUPABASE_URL dan '
+                  'SUPABASE_PUBLISHABLE_KEY sudah diatur, '
                   'lalu jalankan ulang aplikasi.',
                   textAlign: TextAlign.center,
                   style: TextStyle(height: 1.5),

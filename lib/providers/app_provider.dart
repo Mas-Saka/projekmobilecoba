@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/sensor_engine.dart';
 
 class AppProvider extends ChangeNotifier {
@@ -7,11 +7,34 @@ class AppProvider extends ChangeNotifier {
   bool developerOverride = false;
   bool emergencyActive = false;
   SensorEngine? _sensor;
+  void setTab(int index) {
+    tabIndex = index;
+    notifyListeners();
+  }
 
-  void setTab(int index) { tabIndex = index; notifyListeners(); }
-  void attachSensor(SensorEngine sensor) { _sensor = sensor; }
-  void setDeveloperOverride(bool value) { developerOverride = value; notifyListeners(); }
-  void triggerEmergency() { emergencyActive = true; notifyListeners(); }
-  void cancelEmergency() { emergencyActive = false; _sensor?.resetTrigger(); notifyListeners(); }
-  Future<void> signOut() async { await FirebaseAuth.instance.signOut(); tabIndex = 0; notifyListeners(); }
+  void attachSensor(SensorEngine sensor) {
+    _sensor = sensor;
+  }
+
+  void setDeveloperOverride(bool value) {
+    developerOverride = value;
+    notifyListeners();
+  }
+
+  void triggerEmergency() {
+    emergencyActive = true;
+    notifyListeners();
+  }
+
+  void cancelEmergency() {
+    emergencyActive = false;
+    _sensor?.resetTrigger();
+    notifyListeners();
+  }
+
+  Future<void> signOut() async {
+    await Supabase.instance.client.auth.signOut();
+    tabIndex = 0;
+    notifyListeners();
+  }
 }

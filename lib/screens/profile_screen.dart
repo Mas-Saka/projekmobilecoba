@@ -1,9 +1,9 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
-import '../services/local_service.dart';
+import 'package:flutter/services.dart';
 import '../widgets/resq_widgets.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -13,11 +13,12 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _local = LocalService();
   final _blood = TextEditingController();
   final _allergies = TextEditingController();
   final _contact = TextEditingController();
   final _feedback = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  bool _hasMedicalData = false;
   bool _loading = true, _saving = false, _unlocked = false;
   @override
   void initState() {
@@ -35,28 +36,87 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _load() async {
-    final data = await _local.loadMedical();
-    if (!mounted) return;
-    _blood.text = data['blood'] ?? '';
-    _allergies.text = data['allergies'] ?? '';
-    _contact.text = data['contact'] ?? '';
-    setState(() {
-      _loading = false;
-      _unlocked = true;
-    });
+    try {
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        if (mounted) {
+          setState(() => _loading = false);
+        }
+        return;
+      }
+
+      final data = await supabase
+          .from('medical_records')
+          .select('blood_group, allergies, emergency_contact')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (!mounted) return;
+      final hasData = data != null;
+
+      if (data != null) {
+        _blood.text = data['blood_group'] ?? '';
+        _allergies.text = data['allergies'] ?? '';
+        _contact.text = data['emergency_contact'] ?? '';
+      }
+
+      setState(() {
+        _loading = false;
+        _hasMedicalData = hasData;
+        _unlocked = !hasData;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+      });
+
+      _snack('Gagal memuat data medis. Periksa koneksi Supabase.');
+      debugPrint('Gagal memuat rekam medis: $e');
+    }
   }
 
   Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) {
+      _snack('Periksa kembali data yang kamu masukkan.');
+      return;
+    }
+
     setState(() => _saving = true);
+
     try {
-      await _local.saveMedical({
-        'blood': _blood.text.trim(),
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        _snack('Silakan masuk terlebih dahulu.');
+        return;
+      }
+
+      await supabase.from('medical_records').upsert({
+        'user_id': user.id,
+        'blood_group': _blood.text.trim(),
         'allergies': _allergies.text.trim(),
-        'contact': _contact.text.trim()
+        'emergency_contact': _contact.text.trim(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
-      if (mounted) _snack('Data medis tersimpan di perangkat.');
-    } catch (_) {
-      if (mounted) _snack('Gagal menyimpan data.');
+
+      if (mounted) {
+        setState(() {
+          _hasMedicalData = true;
+          _unlocked = false;
+        });
+
+        _snack('Data medis tersimpan. Data sekarang terkunci.');
+      }
+    } catch (e) {
+      if (mounted) {
+        _snack('Gagal menyimpan data medis ke Supabase.');
+      }
+      debugPrint('Gagal menyimpan rekam medis: $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -65,16 +125,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _biometricLock() async {
     try {
       final auth = LocalAuthentication();
+
       final supported = await auth.isDeviceSupported();
-      if (!supported) {
-        _snack('Perangkat tidak mendukung biometrik.');
+      final canCheck = await auth.canCheckBiometrics;
+
+      if (!supported || !canCheck) {
+        _snack(
+          'Biometrik tidak tersedia. Periksa dukungan perangkat dan pengaturan sidik jari.',
+        );
         return;
       }
-      final ok =
-          await auth.authenticate(localizedReason: 'Buka data medis ResQ');
-      if (mounted) setState(() => _unlocked = ok);
-    } catch (_) {
-      _snack('Biometrik tidak tersedia.');
+
+      final ok = await auth.authenticate(
+        localizedReason: 'Verifikasi identitas untuk membuka data medis ResQ',
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _unlocked = ok;
+      });
+
+      if (!ok) {
+        _snack('Verifikasi dibatalkan. Data medis tetap terkunci.');
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      _snack('Biometrik gagal. Periksa pengaturan perangkat.');
+      debugPrint('Kesalahan biometrik: $e');
     }
   }
 
@@ -82,7 +165,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       .showSnackBar(SnackBar(content: Text(value)));
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     return ListView(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
         children: [
@@ -125,8 +208,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 24),
           Row(children: [
             const Expanded(
-                child: SectionTitle('Rekam medis darurat',
-                    subtitle: 'Disimpan lokal pada perangkat ini.')),
+                child: SectionTitle(
+              'Rekam medis darurat',
+              subtitle: 'Data disimpan dengan aman di akun ResQ.',
+            )),
             IconButton(
                 onPressed: _biometricLock,
                 icon:
@@ -135,7 +220,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 10),
           if (_loading)
             const Center(child: CircularProgressIndicator(color: resqOrange))
-          else if (!_unlocked)
+          else if (_hasMedicalData && !_unlocked)
             ResQCard(
                 child: Column(children: [
               const Icon(Icons.lock_outline, size: 38, color: resqBlue),
@@ -149,53 +234,106 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ]))
           else
             ResQCard(
-                child: Column(children: [
-              DropdownButtonFormField<String>(
-                  value: _blood.text.isEmpty ? null : _blood.text,
-                  decoration: const InputDecoration(
-                      labelText: 'Golongan darah',
-                      border: OutlineInputBorder()),
-                  items: const [
-                    'A+',
-                    'A-',
-                    'B+',
-                    'B-',
-                    'AB+',
-                    'AB-',
-                    'O+',
-                    'O-',
-                    'Belum tahu'
-                  ]
-                      .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _blood.text = v ?? ''),
-                  hint: const Text('Pilih golongan darah')),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: _allergies,
-                  decoration: const InputDecoration(
-                      labelText: 'Alergi / kondisi penting',
-                      hintText: 'Contoh: alergi obat tertentu',
-                      border: OutlineInputBorder())),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: _contact,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                      labelText: 'Kontak darurat',
-                      hintText: 'Nomor keluarga / wali',
-                      border: OutlineInputBorder())),
-              const SizedBox(height: 14),
-              PrimaryButton(
-                  label: _saving ? 'Menyimpan...' : 'Simpan data medis',
-                  icon: Icons.save_outlined,
-                  onPressed: _saving ? null : _save),
-              const SizedBox(height: 8),
-              TextButton.icon(
-                  onPressed: () => setState(() => _unlocked = false),
-                  icon: const Icon(Icons.lock_outline),
-                  label: const Text('Kunci data medis'))
-            ])),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: _blood.text.isEmpty ? null : _blood.text,
+                      decoration: const InputDecoration(
+                        labelText: 'Golongan darah',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        'A+',
+                        'A-',
+                        'B+',
+                        'B-',
+                        'AB+',
+                        'AB-',
+                        'O+',
+                        'O-',
+                        'Belum tahu'
+                      ]
+                          .map((v) => DropdownMenuItem(
+                                value: v,
+                                child: Text(v),
+                              ))
+                          .toList(),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Pilih golongan darah terlebih dahulu.';
+                        }
+                        return null;
+                      },
+                      onChanged: (v) {
+                        setState(() => _blood.text = v ?? '');
+                      },
+                      hint: const Text('Pilih golongan darah'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _allergies,
+                      maxLength: 300,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Alergi / kondisi penting',
+                        hintText: 'Contoh: alergi obat tertentu',
+                        border: OutlineInputBorder(),
+                        helperText: 'Kosongkan jika tidak ada.',
+                      ),
+                      validator: (value) {
+                        final text = value?.trim() ?? '';
+
+                        if (text.isNotEmpty && text.length < 2) {
+                          return 'Jelaskan alergi atau kondisi dengan lebih lengkap.';
+                        }
+
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _contact,
+                      keyboardType: TextInputType.phone,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                      ],
+                      maxLength: 15,
+                      decoration: const InputDecoration(
+                        labelText: 'Kontak darurat',
+                        hintText: 'Contoh: 081234567890',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        final phone = value?.trim() ?? '';
+
+                        if (phone.isEmpty) {
+                          return 'Nomor kontak darurat wajib diisi.';
+                        }
+
+                        if (phone.length < 8 || phone.length > 15) {
+                          return 'Nomor harus terdiri dari 8–15 angka.';
+                        }
+
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    PrimaryButton(
+                        label: _saving ? 'Menyimpan...' : 'Simpan data medis',
+                        icon: Icons.save_outlined,
+                        onPressed: _saving ? null : _save),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _unlocked = false),
+                      icon: const Icon(Icons.lock_outline),
+                      label: const Text('Kunci data medis'),
+                    )
+                  ],
+                ),
+              ),
+            ),
           const SizedBox(height: 24),
           const SectionTitle('Masukan untuk ResQ'),
           const SizedBox(height: 10),
@@ -210,17 +348,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     hintText: 'Apa yang bisa kami perbaiki?')),
             const SizedBox(height: 12),
             PrimaryButton(
-                label: 'Kirim masukan',
-                icon: Icons.chat_bubble_outline,
-                onPressed: () {
-                  if (_feedback.text.trim().isEmpty) {
-                    _snack('Tulis masukan terlebih dahulu.');
-                    return;
-                  }
-                  _snack(
-                      'Terima kasih! Form feedback demo belum mengirim ke server.');
+              label: 'Kirim masukan',
+              icon: Icons.chat_bubble_outline,
+              onPressed: () async {
+                final message = _feedback.text.trim();
+
+                if (message.isEmpty) {
+                  _snack('Tulis masukan terlebih dahulu.');
+                  return;
+                }
+
+                final supabase = Supabase.instance.client;
+                final user = supabase.auth.currentUser;
+
+                if (user == null) {
+                  _snack('Silakan masuk terlebih dahulu.');
+                  return;
+                }
+
+                try {
+                  await supabase.from('feedback').insert({
+                    'user_id': user.id,
+                    'message': message,
+                  });
+
+                  if (!mounted) return;
+
                   _feedback.clear();
-                })
+                  _snack('Terima kasih! Feedback berhasil dikirim.');
+                } catch (e) {
+                  if (!mounted) return;
+
+                  _snack('Gagal mengirim feedback. Coba lagi.');
+                  debugPrint('Gagal menyimpan feedback: $e');
+                }
+              },
+            )
           ])),
           const SizedBox(height: 24),
           SizedBox(

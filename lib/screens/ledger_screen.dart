@@ -1,7 +1,6 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/app_models.dart';
 import '../services/report_service.dart';
 import '../widgets/resq_widgets.dart';
@@ -22,6 +21,8 @@ class _LedgerScreenState extends State<LedgerScreen> {
 
   String _type = 'Banjir';
   bool _busy = false;
+  bool _isAdmin = false;
+  final Set<String> _updatingReports = {};
 
   @override
   void dispose() {
@@ -31,12 +32,81 @@ class _LedgerScreenState extends State<LedgerScreen> {
     super.dispose();
   }
 
+  Future<void> _checkAdmin() async {
+    final supabase = Supabase.instance.client;
+    final user = supabase.auth.currentUser;
+
+    if (user == null) return;
+
+    try {
+      final result = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      setState(() {
+        _isAdmin = result?['role'] == 'admin';
+      });
+    } catch (e) {
+      debugPrint('Gagal memeriksa peran admin: $e');
+    }
+  }
+
+  Future<void> _updateReportStatus(
+    DisasterReport report,
+    String status,
+  ) async {
+    if (!_isAdmin) return;
+
+    final reportId = int.tryParse(report.id);
+
+    if (reportId == null) {
+      _snack('ID laporan tidak valid.');
+      return;
+    }
+
+    setState(() => _updatingReports.add(report.id));
+
+    try {
+      await Supabase.instance.client.rpc(
+        'set_report_status',
+        params: {
+          'p_report_id': reportId,
+          'p_status': status,
+        },
+      );
+
+      if (mounted) {
+        _snack('Status laporan berhasil diubah menjadi $status.');
+      }
+    } catch (e) {
+      debugPrint('Gagal mengubah status laporan: $e');
+
+      if (mounted) {
+        _snack('Gagal mengubah status. Periksa hak akses admin.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _updatingReports.remove(report.id));
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAdmin();
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
 
     if (user == null) {
       _snack('Silakan masuk terlebih dahulu.');
@@ -51,7 +121,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
         description: _description.text,
         latitude: double.parse(_lat.text),
         longitude: double.parse(_lon.text),
-        userId: user.uid,
+        userId: user.id,
       );
 
       _description.clear();
@@ -62,7 +132,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
     } catch (e) {
       if (mounted) {
         _snack(
-          'Gagal mengirim laporan. Periksa koneksi dan aturan Firestore.',
+          'Gagal mengirim laporan. Periksa koneksi dan aturan Supabase.',
         );
       }
     } finally {
@@ -255,7 +325,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
               return ResQCard(
                 child: Text(
                   'Laporan belum bisa dimuat. '
-                  'Pastikan Firestore sudah aktif.\n${snapshot.error}',
+                  'Pastikan Supabase sudah aktif.\n${snapshot.error}',
                   style: const TextStyle(color: resqRed),
                 ),
               );
@@ -360,13 +430,48 @@ class _LedgerScreenState extends State<LedgerScreen> {
                         ),
                         const SizedBox(height: 7),
                         Text(
-                          report.status,
+                          'Status: ${report.status}',
                           style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: resqOrange,
                           ),
                         ),
+                        if (_isAdmin) ...[
+                          const SizedBox(height: 10),
+                          const Text(
+                            'Panel verifikasi admin',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: resqBlue,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final status in [
+                                'Terverifikasi',
+                                'Belum terkonfirmasi',
+                                'Ditolak',
+                              ])
+                                OutlinedButton(
+                                  onPressed: _updatingReports
+                                          .contains(report.id)
+                                      ? null
+                                      : () =>
+                                          _updateReportStatus(report, status),
+                                  child: Text(status),
+                                ),
+                            ],
+                          ),
+                          if (_updatingReports.contains(report.id))
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: LinearProgressIndicator(),
+                            ),
+                        ],
                       ],
                     ),
                   ),
