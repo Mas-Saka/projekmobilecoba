@@ -1,8 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'package:flutter/foundation.dart';
 import '../models/app_models.dart';
 
 class ReportService {
@@ -10,6 +11,8 @@ class ReportService {
       : _db = client ?? Supabase.instance.client;
 
   final SupabaseClient _db;
+
+  static const String photoBucket = 'report-photos';
 
   String createHash({
     required DateTime timestamp,
@@ -41,14 +44,79 @@ class ReportService {
                 'description': row['description'],
                 'latitude': row['latitude'],
                 'longitude': row['longitude'],
-                'createdAt': row['created_at'],
+                'created_at': row['created_at'],
                 'hash': row['hash'],
                 'status': row['status'],
-                'userId': row['user_id'],
+                'user_id': row['user_id'],
+                'photo_path': row['photo_path'],
               },
             );
           }).toList();
         });
+  }
+
+  Future<String> uploadReportPhoto({
+    required String userId,
+    required Uint8List bytes,
+    required String extension,
+  }) async {
+    final safeExtension = extension.toLowerCase().replaceAll('.', '');
+
+    if (!['jpg', 'jpeg', 'png', 'webp'].contains(safeExtension)) {
+      throw Exception('Format foto harus JPG, JPEG, PNG, atau WebP.');
+    }
+
+    if (bytes.isEmpty) {
+      throw Exception('File foto kosong.');
+    }
+
+    if (bytes.length > 5 * 1024 * 1024) {
+      throw Exception('Ukuran foto maksimal 5 MB.');
+    }
+
+    final fileName =
+        '${DateTime.now().toUtc().microsecondsSinceEpoch}.$safeExtension';
+
+    final path = '$userId/$fileName';
+
+    await _db.storage.from(photoBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+            contentType: switch (safeExtension) {
+              'jpg' || 'jpeg' => 'image/jpeg',
+              'png' => 'image/png',
+              'webp' => 'image/webp',
+              _ => 'application/octet-stream',
+            },
+            upsert: false,
+          ),
+        );
+
+    return path;
+  }
+
+  Future<String?> getReportPhotoUrl(String? photoPath) async {
+    if (photoPath == null || photoPath.isEmpty) {
+      debugPrint('FOTO ERROR: photoPath kosong atau null.');
+      return null;
+    }
+
+    try {
+      final url =
+          await _db.storage.from(photoBucket).createSignedUrl(photoPath, 3600);
+
+      debugPrint('FOTO BERHASIL: $photoPath');
+      return url;
+    } catch (e, stackTrace) {
+      debugPrint('FOTO ERROR: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      return null;
+    }
+  }
+
+  Future<void> deleteReportPhoto(String path) async {
+    await _db.storage.from(photoBucket).remove([path]);
   }
 
   Future<void> submit({
@@ -57,6 +125,7 @@ class ReportService {
     required double latitude,
     required double longitude,
     required String userId,
+    required String photoPath,
   }) async {
     final now = DateTime.now().toUtc();
 
@@ -76,6 +145,7 @@ class ReportService {
       'hash': hash,
       'status': 'Menunggu verifikasi',
       'user_id': userId,
+      'photo_path': photoPath,
     });
   }
 }

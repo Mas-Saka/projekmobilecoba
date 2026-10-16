@@ -4,6 +4,90 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/app_models.dart';
 import '../services/report_service.dart';
 import '../widgets/resq_widgets.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:typed_data';
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart';
+
+class _ReportPhoto extends StatefulWidget {
+  const _ReportPhoto({required this.photoPath});
+
+  final String? photoPath;
+
+  @override
+  State<_ReportPhoto> createState() => _ReportPhotoState();
+}
+
+class _ReportPhotoState extends State<_ReportPhoto> {
+  late Future<String?> _photoUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPhoto();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReportPhoto oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.photoPath != widget.photoPath) {
+      _loadPhoto();
+    }
+  }
+
+  void _loadPhoto() {
+    _photoUrl = ReportService().getReportPhotoUrl(widget.photoPath);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.photoPath == null || widget.photoPath!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return FutureBuilder<String?>(
+      future: _photoUrl,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(12),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final url = snapshot.data;
+
+        if (url == null || url.isEmpty) {
+          return const Text('Foto bukti tidak dapat dimuat.');
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 12, bottom: 8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(
+              url,
+              width: double.infinity,
+              height: 200,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return const SizedBox(
+                  height: 100,
+                  child: Center(
+                    child: Text('Gagal menampilkan foto bukti.'),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class LedgerScreen extends StatefulWidget {
   const LedgerScreen({super.key});
@@ -18,6 +102,20 @@ class _LedgerScreenState extends State<LedgerScreen> {
   final _lat = TextEditingController(text: '-7.7971');
   final _lon = TextEditingController(text: '110.3705');
   final _service = ReportService();
+  final MapController _mapController = MapController();
+  final ImagePicker _picker = ImagePicker();
+
+  XFile? _selectedPhoto;
+  Uint8List? _photoBytes;
+
+  bool _pickingPhoto = false;
+
+  LatLng _selectedLocation = const LatLng(
+    -7.7971,
+    110.3705,
+  );
+
+  bool _gettingLocation = false;
 
   String _type = 'Banjir';
   bool _busy = false;
@@ -95,14 +193,148 @@ class _LedgerScreenState extends State<LedgerScreen> {
     }
   }
 
+  void _selectLocation(LatLng point) {
+    setState(() {
+      _selectedLocation = point;
+      _lat.text = point.latitude.toStringAsFixed(6);
+      _lon.text = point.longitude.toStringAsFixed(6);
+    });
+  }
+
+  Future<void> _useCurrentLocation() async {
+    setState(() => _gettingLocation = true);
+
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        if (mounted) {
+          _snack('Aktifkan layanan lokasi GPS terlebih dahulu.');
+        }
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          _snack('Izin lokasi belum diberikan.');
+        }
+        return;
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          _snack(
+            'Izin lokasi ditolak permanen. '
+            'Aktifkan melalui pengaturan aplikasi.',
+          );
+        }
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition();
+
+      final point = LatLng(
+        position.latitude,
+        position.longitude,
+      );
+
+      _selectLocation(point);
+
+      _mapController.move(point, 16);
+
+      if (mounted) {
+        _snack('Lokasi GPS berhasil dipilih.');
+      }
+    } catch (e) {
+      debugPrint('Gagal mengambil GPS: $e');
+
+      if (mounted) {
+        _snack('Gagal mengambil lokasi GPS. Coba lagi.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _gettingLocation = false);
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _checkAdmin();
   }
 
+  Future<void> _pickPhoto(ImageSource source) async {
+    try {
+      setState(() => _pickingPhoto = true);
+
+      final photo = await _picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1600,
+      );
+
+      if (photo == null) return;
+
+      final extension = photo.name.contains('.')
+          ? photo.name.split('.').last.toLowerCase()
+          : '';
+
+      if (!['jpg', 'jpeg', 'png', 'webp'].contains(extension)) {
+        if (mounted) {
+          _snack('Format foto harus JPG, JPEG, PNG, atau WebP.');
+        }
+        return;
+      }
+
+      final bytes = await photo.readAsBytes();
+
+      if (bytes.isEmpty) {
+        if (mounted) {
+          _snack('Foto tidak dapat dibaca. Silakan pilih foto lain.');
+        }
+        return;
+      }
+
+      if (bytes.length > 5 * 1024 * 1024) {
+        if (mounted) {
+          _snack('Ukuran foto maksimal 5 MB. Pilih foto yang lebih kecil.');
+        }
+        return;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _selectedPhoto = photo;
+        _photoBytes = bytes;
+      });
+    } catch (e) {
+      debugPrint('Gagal memilih foto: $e');
+
+      if (mounted) {
+        _snack('Gagal mengambil foto. Periksa izin kamera atau galeri.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pickingPhoto = false);
+      }
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    if (_selectedPhoto == null || _photoBytes == null) {
+      _snack('Foto bukti wajib dipilih sebelum mengirim laporan.');
       return;
     }
 
@@ -115,25 +347,53 @@ class _LedgerScreenState extends State<LedgerScreen> {
 
     setState(() => _busy = true);
 
+    String? uploadedPhotoPath;
+
     try {
+      final extension = _selectedPhoto!.name.contains('.')
+          ? _selectedPhoto!.name.split('.').last.toLowerCase()
+          : '';
+
+      uploadedPhotoPath = await _service.uploadReportPhoto(
+        userId: user.id,
+        bytes: _photoBytes!,
+        extension: extension,
+      );
+
       await _service.submit(
         type: _type,
         description: _description.text,
-        latitude: double.parse(_lat.text),
-        longitude: double.parse(_lon.text),
+        latitude: _selectedLocation.latitude,
+        longitude: _selectedLocation.longitude,
         userId: user.id,
+        photoPath: uploadedPhotoPath,
       );
+
+      if (!mounted) return;
+
+      setState(() {
+        _selectedPhoto = null;
+        _photoBytes = null;
+      });
 
       _description.clear();
 
-      if (mounted) {
-        _snack('Laporan berhasil dikirim.');
+      _snack('Laporan beserta foto bukti berhasil dikirim.');
+    } catch (e, stackTrace) {
+      debugPrint('GAGAL KIRIM LAPORAN: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
+      // Hapus foto jika sudah terunggah tetapi laporan gagal disimpan.
+      if (uploadedPhotoPath != null) {
+        try {
+          await _service.deleteReportPhoto(uploadedPhotoPath);
+        } catch (deleteError) {
+          debugPrint('Gagal membersihkan foto: $deleteError');
+        }
       }
-    } catch (e) {
+
       if (mounted) {
-        _snack(
-          'Gagal mengirim laporan. Periksa koneksi dan aturan Supabase.',
-        );
+        _snack('Gagal mengirim laporan: $e');
       }
     } finally {
       if (mounted) {
@@ -146,24 +406,6 @@ class _LedgerScreenState extends State<LedgerScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text)),
     );
-  }
-
-  String? _validateCoord(
-    String? value,
-    double min,
-    double max,
-  ) {
-    final number = double.tryParse(value ?? '');
-
-    if (number == null) {
-      return 'Angka tidak valid';
-    }
-
-    if (number < min || number > max) {
-      return 'Rentang $min s.d. $max';
-    }
-
-    return null;
   }
 
   @override
@@ -251,61 +493,201 @@ class _LedgerScreenState extends State<LedgerScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Foto bukti kejadian *',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: resqBlue,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Wajib menyertakan foto. Format JPG, PNG, atau WebP, maksimal 5 MB.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.blueGrey,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (_photoBytes != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(13),
+                    child: Image.memory(
+                      _photoBytes!,
+                      width: double.infinity,
+                      height: 200,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _busy || _pickingPhoto
+                          ? null
+                          : () {
+                              setState(() {
+                                _selectedPhoto = null;
+                                _photoBytes = null;
+                              });
+                            },
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Hapus foto'),
+                    ),
+                  ),
+                ] else
+                  Container(
+                    width: double.infinity,
+                    height: 120,
+                    decoration: BoxDecoration(
+                      color: resqBg,
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: Colors.blueGrey.shade200),
+                    ),
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.add_a_photo_outlined,
+                          size: 32,
+                          color: Colors.blueGrey,
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Belum ada foto bukti',
+                          style: TextStyle(color: Colors.blueGrey),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
-                      child: TextFormField(
-                        controller: _lat,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Latitude',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.all(
-                              Radius.circular(13),
-                            ),
-                          ),
-                        ),
-                        validator: (value) => _validateCoord(value, -90, 90),
+                      child: OutlinedButton.icon(
+                        onPressed: _busy || _pickingPhoto
+                            ? null
+                            : () => _pickPhoto(ImageSource.camera),
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('Kamera'),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: TextFormField(
-                        controller: _lon,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Longitude',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.all(
-                              Radius.circular(13),
-                            ),
-                          ),
-                        ),
-                        validator: (value) => _validateCoord(value, -180, 180),
+                      child: OutlinedButton.icon(
+                        onPressed: _busy || _pickingPhoto
+                            ? null
+                            : () => _pickPhoto(ImageSource.gallery),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('Galeri'),
                       ),
                     ),
                   ],
                 ),
+                if (_pickingPhoto)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 10),
+                    child: LinearProgressIndicator(),
+                  ),
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Lokasi kejadian',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: resqBlue,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 280,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(13),
+                    child: FlutterMap(
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _selectedLocation,
+                        initialZoom: 14,
+                        onTap: (tapPosition, point) {
+                          _selectLocation(point);
+                        },
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'com.example.resq',
+                        ),
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: _selectedLocation,
+                              width: 48,
+                              height: 48,
+                              child: const Icon(
+                                Icons.location_pin,
+                                color: resqRed,
+                                size: 42,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _gettingLocation ? null : _useCurrentLocation,
+                  icon: _gettingLocation
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.my_location),
+                  label: Text(
+                    _gettingLocation
+                        ? 'Mengambil lokasi...'
+                        : 'Gunakan Lokasi Saya',
+                  ),
+                ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Koordinat awal adalah contoh Yogyakarta. '
-                  'Ganti sesuai lokasi kejadian.',
+                  'Ketuk peta untuk memilih titik kejadian. '
+                  'Kamu tidak harus berada tepat di lokasi bencana.',
                   style: TextStyle(
                     fontSize: 11,
                     color: Colors.blueGrey,
                   ),
                 ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  'Latitude: ${_selectedLocation.latitude.toStringAsFixed(6)}\n'
+                  'Longitude: ${_selectedLocation.longitude.toStringAsFixed(6)}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.blueGrey,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 PrimaryButton(
-                  label: _busy ? 'Mengirim...' : 'Kirim laporan',
+                  label: _busy
+                      ? 'Mengirim...'
+                      : _pickingPhoto
+                          ? 'Memproses foto...'
+                          : 'Kirim laporan',
                   icon: Icons.near_me_rounded,
-                  onPressed: _busy ? null : _submit,
+                  onPressed: _busy || _pickingPhoto ? null : _submit,
                 ),
               ],
             ),
@@ -403,6 +785,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
                         ),
                         const SizedBox(height: 10),
                         Text(report.description),
+                        _ReportPhoto(photoPath: report.photoPath),
                         const SizedBox(height: 8),
                         Text(
                           '${report.latitude.toStringAsFixed(5)}, '

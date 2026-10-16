@@ -19,7 +19,8 @@ class DisasterReport {
       required this.longitude,
       required this.createdAt,
       required this.hash,
-      this.status = 'Menunggu verifikasi'});
+      this.status = 'Menunggu verifikasi',
+      this.photoPath});
   final String id;
   final String type;
   final String description;
@@ -28,6 +29,7 @@ class DisasterReport {
   final DateTime createdAt;
   final String hash;
   final String status;
+  final String? photoPath;
 
   factory DisasterReport.fromMap(String id, Map<String, dynamic> map) =>
       DisasterReport(
@@ -36,8 +38,9 @@ class DisasterReport {
           description: map['description'] as String? ?? '',
           latitude: (map['latitude'] as num?)?.toDouble() ?? 0,
           longitude: (map['longitude'] as num?)?.toDouble() ?? 0,
-          createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '') ??
+          createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ??
               DateTime.now(),
           hash: map['hash'] as String? ?? '',
-          status: map['status'] as String? ?? 'Menunggu verifikasi');
+          status: map['status'] as String? ?? 'Menunggu verifikasi',
+          photoPath: map['photo_path'] as String?);
 }
