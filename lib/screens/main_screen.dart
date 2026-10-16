@@ -9,6 +9,8 @@ import 'survival_screen.dart';
 import 'ledger_screen.dart';
 import 'news_screen.dart';
 import 'profile_screen.dart';
+import 'riwayat_laporan_screen.dart';
+import 'tugas_petugas_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -20,13 +22,22 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   late final SensorEngine _sensor;
 
+  Future<void> _loadRole() async {
+    await context.read<AppProvider>().loadUserRole();
+  }
+
   @override
   void initState() {
     super.initState();
+
     _sensor = SensorEngine(onEmergency: () {
-      if (mounted) context.read<AppProvider>().triggerEmergency();
+      if (mounted) {
+        context.read<AppProvider>().triggerEmergency();
+      }
     });
+
     context.read<AppProvider>().attachSensor(_sensor);
+    _loadRole();
   }
 
   @override
@@ -39,55 +50,118 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     final app = context.watch<AppProvider>();
 
-    final screens = const [
-      HomeScreen(),
-      SurvivalScreen(),
-      LedgerScreen(),
-      NewsScreen(),
-      ProfileScreen(),
-    ];
+    if (app.roleLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    late final List<Widget> screens;
+    late final List<NavigationDestination> destinations;
+
+    if (app.userRole == 'admin') {
+      screens = const [
+        HomeScreen(),
+        RiwayatLaporanScreen(),
+        ProfileScreen(),
+      ];
+
+      destinations = const [
+        NavigationDestination(
+          icon: Icon(Icons.dashboard_outlined),
+          selectedIcon: Icon(Icons.dashboard),
+          label: 'Dashboard',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.fact_check_outlined),
+          selectedIcon: Icon(Icons.fact_check),
+          label: 'Verifikasi',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.person_outline),
+          selectedIcon: Icon(Icons.person),
+          label: 'Profil',
+        ),
+      ];
+    } else if (app.userRole == 'petugas') {
+      screens = const [
+        HomeScreen(),
+        TugasPetugasScreen(),
+        ProfileScreen(),
+      ];
+
+      destinations = const [
+        NavigationDestination(
+          icon: Icon(Icons.dashboard_outlined),
+          selectedIcon: Icon(Icons.dashboard),
+          label: 'Dashboard',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.assignment_outlined),
+          selectedIcon: Icon(Icons.assignment),
+          label: 'Tugas',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.person_outline),
+          selectedIcon: Icon(Icons.person),
+          label: 'Profil',
+        ),
+      ];
+    } else {
+      screens = const [
+        HomeScreen(),
+        SurvivalScreen(),
+        LedgerScreen(),
+        NewsScreen(),
+        ProfileScreen(),
+      ];
+
+      destinations = const [
+        NavigationDestination(
+          icon: Icon(Icons.radar_outlined),
+          selectedIcon: Icon(Icons.radar),
+          label: 'Siaga',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.support_agent_outlined),
+          selectedIcon: Icon(Icons.support_agent),
+          label: 'AI Hub',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.fact_check_outlined),
+          selectedIcon: Icon(Icons.fact_check),
+          label: 'Laporan',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.newspaper_outlined),
+          selectedIcon: Icon(Icons.newspaper),
+          label: 'Berita',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.person_outline),
+          selectedIcon: Icon(Icons.person),
+          label: 'Profil',
+        ),
+      ];
+    }
+
+    final safeIndex = app.tabIndex.clamp(0, screens.length - 1);
 
     return Stack(
       children: [
         Scaffold(
           body: SafeArea(
             child: IndexedStack(
-              index: app.tabIndex,
+              index: safeIndex,
               children: screens,
             ),
           ),
           bottomNavigationBar: NavigationBar(
-            selectedIndex: app.tabIndex,
-            onDestinationSelected: context.read<AppProvider>().setTab,
+            selectedIndex: safeIndex,
+            onDestinationSelected: app.setTab,
             backgroundColor: Colors.white,
             indicatorColor: resqOrange.withValues(alpha: .13),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.radar_outlined),
-                selectedIcon: Icon(Icons.radar),
-                label: 'Siaga',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.support_agent_outlined),
-                selectedIcon: Icon(Icons.support_agent),
-                label: 'AI Hub',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.fact_check_outlined),
-                selectedIcon: Icon(Icons.fact_check),
-                label: 'Laporan',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.newspaper_outlined),
-                selectedIcon: Icon(Icons.newspaper),
-                label: 'Berita',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
-                label: 'Profil',
-              ),
-            ],
+            destinations: destinations,
           ),
         ),
         if (app.emergencyActive)

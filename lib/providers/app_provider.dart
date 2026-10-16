@@ -6,6 +6,8 @@ import '../services/biometric_login_service.dart';
 
 class AppProvider extends ChangeNotifier {
   int tabIndex = 0;
+  String userRole = 'pengguna';
+  bool roleLoading = false;
   bool developerOverride = false;
   bool emergencyActive = false;
   bool appLocked = false;
@@ -37,6 +39,42 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> loadUserRole() async {
+    final user = Supabase.instance.client.auth.currentUser;
+
+    if (user == null) {
+      userRole = 'pengguna';
+      roleLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    roleLoading = true;
+    notifyListeners();
+
+    try {
+      final result = await Supabase.instance.client
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      final role = result?['role'] as String?;
+
+      if (role == 'admin' || role == 'petugas') {
+        userRole = role!;
+      } else {
+        userRole = 'pengguna';
+      }
+    } catch (e) {
+      debugPrint('Gagal membaca role pengguna: $e');
+      userRole = 'pengguna';
+    } finally {
+      roleLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> initializeLockState() async {
     appLocked = await BiometricLoginService().isLocked();
     notifyListeners();
@@ -54,6 +92,7 @@ class AppProvider extends ChangeNotifier {
     }
 
     tabIndex = 0;
+    userRole = 'pengguna';
     notifyListeners();
   }
 

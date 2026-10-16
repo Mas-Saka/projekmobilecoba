@@ -49,6 +49,11 @@ class ReportService {
                 'status': row['status'],
                 'user_id': row['user_id'],
                 'photo_path': row['photo_path'],
+                'assigned_to': row['assigned_to'],
+                'handling_status': row['handling_status'],
+                'handling_notes': row['handling_notes'],
+                'handled_at': row['handled_at'],
+                'handling_photo_path': row['handling_photo_path'],
               },
             );
           }).toList();
@@ -97,26 +102,104 @@ class ReportService {
   }
 
   Future<String?> getReportPhotoUrl(String? photoPath) async {
-    if (photoPath == null || photoPath.isEmpty) {
-      debugPrint('FOTO ERROR: photoPath kosong atau null.');
+    if (photoPath == null || photoPath.trim().isEmpty) {
       return null;
     }
 
-    try {
-      final url =
-          await _db.storage.from(photoBucket).createSignedUrl(photoPath, 3600);
+    final path = photoPath.trim().replaceAll('\\', '/');
 
-      debugPrint('FOTO BERHASIL: $photoPath');
+    try {
+      final supabase = Supabase.instance.client;
+
+      final url = await supabase.storage
+          .from('report-photos')
+          .createSignedUrl(path, 3600);
+
       return url;
-    } catch (e, stackTrace) {
-      debugPrint('FOTO ERROR: $e');
-      debugPrintStack(stackTrace: stackTrace);
+    } on StorageException catch (e) {
+      debugPrint(
+        'Gagal membuat signed URL foto: '
+        'status=${e.statusCode}, pesan=${e.message}',
+      );
+      return null;
+    } catch (e) {
+      debugPrint('Gagal memuat foto: $e');
       return null;
     }
   }
 
   Future<void> deleteReportPhoto(String path) async {
     await _db.storage.from(photoBucket).remove([path]);
+  }
+
+  Future<void> updateHandlingNotes({
+    required String reportId,
+    required String notes,
+  }) async {
+    await _db.rpc(
+      'update_report_handling',
+      params: {
+        'p_report_id': int.parse(reportId),
+        'p_handling_status': 'Sedang ditangani',
+        'p_handling_notes': notes.trim(),
+      },
+    );
+  }
+
+  Future<String> uploadHandlingPhoto({
+    required String userId,
+    required String reportId,
+    required Uint8List bytes,
+    required String extension,
+  }) async {
+    final safeExtension = extension.toLowerCase().replaceAll('.', '');
+
+    if (!['jpg', 'jpeg', 'png', 'webp'].contains(safeExtension)) {
+      throw Exception('Format foto harus JPG, JPEG, PNG, atau WebP.');
+    }
+
+    if (bytes.isEmpty) {
+      throw Exception('File foto kosong.');
+    }
+
+    if (bytes.length > 5 * 1024 * 1024) {
+      throw Exception('Ukuran foto maksimal 5 MB.');
+    }
+
+    final fileName =
+        '${DateTime.now().toUtc().microsecondsSinceEpoch}.$safeExtension';
+
+    // Folder userId mengikuti pola upload foto laporan yang sudah ada.
+    final path = '$userId/handling/$reportId/$fileName';
+
+    await _db.storage.from(photoBucket).uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+            contentType: switch (safeExtension) {
+              'jpg' || 'jpeg' => 'image/jpeg',
+              'png' => 'image/png',
+              'webp' => 'image/webp',
+              _ => 'application/octet-stream',
+            },
+            upsert: false,
+          ),
+        );
+
+    return path;
+  }
+
+  Future<void> saveHandlingPhotoPath({
+    required String reportId,
+    required String photoPath,
+  }) async {
+    await _db.rpc(
+      'update_report_handling_photo',
+      params: {
+        'p_report_id': int.parse(reportId),
+        'p_handling_photo_path': photoPath,
+      },
+    );
   }
 
   Future<void> submit({

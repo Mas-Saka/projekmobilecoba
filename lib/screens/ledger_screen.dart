@@ -1,93 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/app_models.dart';
-import '../services/report_service.dart';
-import '../widgets/resq_widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/foundation.dart';
 
-class _ReportPhoto extends StatefulWidget {
-  const _ReportPhoto({required this.photoPath});
-
-  final String? photoPath;
-
-  @override
-  State<_ReportPhoto> createState() => _ReportPhotoState();
-}
-
-class _ReportPhotoState extends State<_ReportPhoto> {
-  late Future<String?> _photoUrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadPhoto();
-  }
-
-  @override
-  void didUpdateWidget(covariant _ReportPhoto oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    if (oldWidget.photoPath != widget.photoPath) {
-      _loadPhoto();
-    }
-  }
-
-  void _loadPhoto() {
-    _photoUrl = ReportService().getReportPhotoUrl(widget.photoPath);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.photoPath == null || widget.photoPath!.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return FutureBuilder<String?>(
-      future: _photoUrl,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.all(12),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        final url = snapshot.data;
-
-        if (url == null || url.isEmpty) {
-          return const Text('Foto bukti tidak dapat dimuat.');
-        }
-
-        return Padding(
-          padding: const EdgeInsets.only(top: 12, bottom: 8),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(
-              url,
-              width: double.infinity,
-              height: 200,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return const SizedBox(
-                  height: 100,
-                  child: Center(
-                    child: Text('Gagal menampilkan foto bukti.'),
-                  ),
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
+import '../services/report_service.dart';
+import '../widgets/resq_widgets.dart';
+import 'riwayat_laporan_screen.dart';
 
 class LedgerScreen extends StatefulWidget {
   const LedgerScreen({super.key});
@@ -119,8 +41,6 @@ class _LedgerScreenState extends State<LedgerScreen> {
 
   String _type = 'Banjir';
   bool _busy = false;
-  bool _isAdmin = false;
-  final Set<String> _updatingReports = {};
 
   @override
   void dispose() {
@@ -128,69 +48,6 @@ class _LedgerScreenState extends State<LedgerScreen> {
     _lat.dispose();
     _lon.dispose();
     super.dispose();
-  }
-
-  Future<void> _checkAdmin() async {
-    final supabase = Supabase.instance.client;
-    final user = supabase.auth.currentUser;
-
-    if (user == null) return;
-
-    try {
-      final result = await supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-      if (!mounted) return;
-
-      setState(() {
-        _isAdmin = result?['role'] == 'admin';
-      });
-    } catch (e) {
-      debugPrint('Gagal memeriksa peran admin: $e');
-    }
-  }
-
-  Future<void> _updateReportStatus(
-    DisasterReport report,
-    String status,
-  ) async {
-    if (!_isAdmin) return;
-
-    final reportId = int.tryParse(report.id);
-
-    if (reportId == null) {
-      _snack('ID laporan tidak valid.');
-      return;
-    }
-
-    setState(() => _updatingReports.add(report.id));
-
-    try {
-      await Supabase.instance.client.rpc(
-        'set_report_status',
-        params: {
-          'p_report_id': reportId,
-          'p_status': status,
-        },
-      );
-
-      if (mounted) {
-        _snack('Status laporan berhasil diubah menjadi $status.');
-      }
-    } catch (e) {
-      debugPrint('Gagal mengubah status laporan: $e');
-
-      if (mounted) {
-        _snack('Gagal mengubah status. Periksa hak akses admin.');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _updatingReports.remove(report.id));
-      }
-    }
   }
 
   void _selectLocation(LatLng point) {
@@ -262,12 +119,6 @@ class _LedgerScreenState extends State<LedgerScreen> {
         setState(() => _gettingLocation = false);
       }
     }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _checkAdmin();
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
@@ -694,174 +545,61 @@ class _LedgerScreenState extends State<LedgerScreen> {
           ),
         ),
         const SizedBox(height: 24),
-        const SectionTitle(
-          'Ledger laporan',
-          subtitle: 'Fingerprint SHA-256 membantu memeriksa perubahan data, '
-              'bukan memverifikasi kebenaran laporan.',
-        ),
-        const SizedBox(height: 10),
-        StreamBuilder<List<DisasterReport>>(
-          stream: _service.watchReports(),
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return ResQCard(
-                child: Text(
-                  'Laporan belum bisa dimuat. '
-                  'Pastikan Supabase sudah aktif.\n${snapshot.error}',
-                  style: const TextStyle(color: resqRed),
+        ResQCard(
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: resqOrange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              );
-            }
-
-            if (!snapshot.hasData) {
-              return const ResQCard(
-                child: Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: CircularProgressIndicator(
-                      color: resqOrange,
-                    ),
-                  ),
+                child: const Icon(
+                  Icons.history,
+                  color: resqOrange,
+                  size: 28,
                 ),
-              );
-            }
-
-            final reports = snapshot.data!;
-
-            if (reports.isEmpty) {
-              return const ResQCard(
-                child: Text('Belum ada laporan warga.'),
-              );
-            }
-
-            return Column(
-              children: reports.map((report) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: ResQCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: resqOrange.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.campaign_outlined,
-                                color: resqOrange,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    report.type,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w900,
-                                      color: resqBlue,
-                                    ),
-                                  ),
-                                  Text(
-                                    DateFormat(
-                                      'dd MMM yyyy • HH:mm',
-                                    ).format(
-                                      report.createdAt.toLocal(),
-                                    ),
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.blueGrey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(report.description),
-                        _ReportPhoto(photoPath: report.photoPath),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${report.latitude.toStringAsFixed(5)}, '
-                          '${report.longitude.toStringAsFixed(5)}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.blueGrey,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: resqBg,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: SelectableText(
-                            'SHA-256\n${report.hash}',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 7),
-                        Text(
-                          'Status: ${report.status}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: resqOrange,
-                          ),
-                        ),
-                        if (_isAdmin) ...[
-                          const SizedBox(height: 10),
-                          const Text(
-                            'Panel verifikasi admin',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: resqBlue,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              for (final status in [
-                                'Terverifikasi',
-                                'Belum terkonfirmasi',
-                                'Ditolak',
-                              ])
-                                OutlinedButton(
-                                  onPressed: _updatingReports
-                                          .contains(report.id)
-                                      ? null
-                                      : () =>
-                                          _updateReportStatus(report, status),
-                                  child: Text(status),
-                                ),
-                            ],
-                          ),
-                          if (_updatingReports.contains(report.id))
-                            const Padding(
-                              padding: EdgeInsets.only(top: 8),
-                              child: LinearProgressIndicator(),
-                            ),
-                        ],
-                      ],
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Riwayat Laporan',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: resqBlue,
+                        fontSize: 16,
+                      ),
                     ),
-                  ),
-                );
-              }).toList(),
-            );
-          },
+                    SizedBox(height: 4),
+                    Text(
+                      'Lihat laporan, foto, lokasi, dan status verifikasi.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blueGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Buka riwayat laporan',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const RiwayatLaporanScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(
+                  Icons.arrow_forward_ios,
+                  color: resqOrange,
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 24),
         const SectionTitle('Alat cepat'),

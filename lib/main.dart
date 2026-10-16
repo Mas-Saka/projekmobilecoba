@@ -6,10 +6,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'providers/app_provider.dart';
 import 'screens/auth_screen.dart';
 import 'widgets/resq_widgets.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  await initializeDateFormatting('id_ID');
   var supabaseReady = false;
 
   try {
@@ -17,6 +19,10 @@ Future<void> main() async {
 
     final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
     final supabasePublishableKey = dotenv.env['SUPABASE_PUBLISHABLE_KEY'] ?? '';
+    debugPrint('SUPABASE URL AKTIF: $supabaseUrl');
+    debugPrint(
+      'SUPABASE KEY TERISI: ${supabasePublishableKey.isNotEmpty}',
+    );
 
     if (supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty) {
       await Supabase.initialize(
@@ -45,6 +51,15 @@ class ResQApp extends StatelessWidget {
       child: MaterialApp(
         title: 'ResQ',
         debugShowCheckedModeBanner: false,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [
+          Locale('id', 'ID'),
+          Locale('en', 'US'),
+        ],
         theme: ThemeData(
           useMaterial3: true,
           scaffoldBackgroundColor: resqBg,
