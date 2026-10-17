@@ -29,14 +29,28 @@ class ReportService {
     return sha256.convert(utf8.encode(canonical)).toString();
   }
 
-  Stream<List<DisasterReport>> watchReports() {
+  Stream<List<DisasterReport>> watchReports({
+    bool isAdmin = false,
+  }) {
+    final currentUserId = _db.auth.currentUser?.id;
+
+    if (!isAdmin && currentUserId == null) {
+      return Stream.value(<DisasterReport>[]);
+    }
+
     return _db
         .from('reports')
         .stream(primaryKey: ['id'])
         .order('created_at', ascending: false)
         .limit(100)
         .map((rows) {
-          return rows.map((row) {
+          final filteredRows = isAdmin
+              ? rows
+              : rows.where(
+                  (row) => row['user_id']?.toString() == currentUserId,
+                );
+
+          return filteredRows.map((row) {
             return DisasterReport.fromMap(
               row['id'].toString(),
               {

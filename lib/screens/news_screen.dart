@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/official_disaster_service.dart';
+import 'detail_berita_screen.dart';
 
 const Color _background = Color(0xFFF7F5EF);
 const Color _darkGreen = Color(0xFF26382B);
@@ -54,45 +57,76 @@ class _NewsScreenState extends State<NewsScreen> {
   }
 
   Future<void> _loadNews() async {
+    if (!mounted) return;
+
     setState(() {
       _loading = true;
       _error = null;
     });
 
+    debugPrint('RESQ: MULAI MEMUAT HALAMAN BERITA');
+
     try {
-      final results = await Future.wait([
-        _loadCommunityNews(),
-        _officialService.getLatestEarthquake(),
-      ]);
+      final berita = await _loadCommunityNews();
 
       if (!mounted) return;
 
       setState(() {
-        _communityNews = results[0] as List<Map<String, dynamic>>;
-        _earthquake = results[1] as OfficialDisasterNews;
-        _loading = false;
+        _communityNews = berita;
+      });
+
+      debugPrint('RESQ: ${berita.length} berita berhasil dimuat');
+    } catch (e, stackTrace) {
+      debugPrint('RESQ: GAGAL MEMUAT BERITA: $e');
+      debugPrint('$stackTrace');
+
+      if (mounted) {
+        setState(() {
+          _error = 'Berita gagal dimuat. Periksa koneksi dan akses Supabase.';
+        });
+      }
+    }
+
+    try {
+      final gempa = await _officialService.getLatestEarthquake();
+
+      if (!mounted) return;
+
+      setState(() {
+        _earthquake = gempa;
       });
     } catch (e) {
-      // Tetap tampilkan berita yang berhasil dimuat.
-      if (!mounted) return;
-
-      setState(() {
-        _loading = false;
-        _error =
-            'Sebagian informasi gagal dimuat. Periksa koneksi lalu coba muat ulang.';
-      });
+      debugPrint('RESQ: Gagal memuat informasi gempa: $e');
     }
+
+    if (!mounted) return;
+
+    setState(() {
+      _loading = false;
+    });
+
+    debugPrint('RESQ: PEMUATAN HALAMAN BERITA SELESAI');
   }
 
   Future<List<Map<String, dynamic>>> _loadCommunityNews() async {
-    final response = await _db
-        .from('news')
-        .select()
-        .eq('is_published', true)
-        .eq('status', 'Disetujui')
-        .order('published_at', ascending: false);
+    try {
+      final response = await _db
+          .from('news')
+          .select()
+          .eq('is_published', true)
+          .eq('status', 'Disetujui')
+          .order('published_at', ascending: false);
 
-    return List<Map<String, dynamic>>.from(response);
+      final berita = List<Map<String, dynamic>>.from(response);
+
+      debugPrint('JUMLAH BERITA: ${berita.length}');
+
+      return berita;
+    } catch (e, stackTrace) {
+      debugPrint('ERROR LOAD BERITA: $e');
+      debugPrint('$stackTrace');
+      rethrow;
+    }
   }
 
   List<Map<String, dynamic>> get _filteredNews {
@@ -106,6 +140,7 @@ class _NewsScreenState extends State<NewsScreen> {
           category.toLowerCase() == _selectedCategory.toLowerCase();
 
       final query = _searchText.toLowerCase();
+
       final matchesSearch = query.isEmpty ||
           title.toLowerCase().contains(query) ||
           summary.toLowerCase().contains(query) ||
@@ -122,6 +157,7 @@ class _NewsScreenState extends State<NewsScreen> {
         _selectedCategory == 'Semua' || _selectedCategory == 'Gempa Bumi';
 
     final query = _searchText.toLowerCase();
+
     final matchesSearch = query.isEmpty ||
         _earthquake!.title.toLowerCase().contains(query) ||
         _earthquake!.summary.toLowerCase().contains(query) ||
@@ -317,17 +353,23 @@ class _NewsScreenState extends State<NewsScreen> {
       source: 'BMKG · Sumber resmi',
       icon: Icons.public,
       color: _orange,
-      onTap: () => _showDetails(
-        title: news.title,
-        category: news.category,
-        summary: news.summary,
-        content:
-            '${news.summary}\n\nLokasi: ${news.location}\nWaktu: ${news.date}\n\nInformasi ini diambil dari feed gempa BMKG. Periksa laman resmi BMKG untuk informasi terbaru.',
-        location: news.location,
-        date: news.date,
-        source: 'BMKG',
-        sourceUrl: news.sourceUrl,
-      ),
+      onTap: () {
+        _openDetail(
+          title: news.title,
+          category: news.category,
+          summary: news.summary,
+          content: '${news.summary}\n\n'
+              'Lokasi: ${news.location}\n'
+              'Waktu: ${news.date}\n\n'
+              'Informasi ini diambil dari feed gempa BMKG. '
+              'Periksa laman resmi BMKG untuk informasi terbaru.',
+          location: news.location,
+          date: news.date,
+          source: 'BMKG',
+          sourceUrl: news.sourceUrl,
+          imageUrls: const [],
+        );
+      },
     );
   }
 
@@ -341,6 +383,47 @@ class _NewsScreenState extends State<NewsScreen> {
     final content = news['content']?.toString() ?? summary;
     final sourceUrl = news['source_url']?.toString();
 
+    // Kumpulkan foto sampul dan semua foto tambahan.
+    final semuaFoto = <String>[];
+
+    void tambahFoto(dynamic nilai) {
+      if (nilai == null) return;
+
+      final foto = nilai.toString().trim();
+
+      if (foto.isNotEmpty && !semuaFoto.contains(foto)) {
+        semuaFoto.add(foto);
+      }
+    }
+
+    // Foto sampul didahulukan.
+    tambahFoto(news['image_url']);
+
+    final fotoTambahan = news['image_urls'];
+
+    if (fotoTambahan is List) {
+      for (final foto in fotoTambahan) {
+        tambahFoto(foto);
+      }
+    } else if (fotoTambahan is String && fotoTambahan.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(fotoTambahan);
+
+        if (decoded is List) {
+          for (final foto in decoded) {
+            tambahFoto(foto);
+          }
+        } else {
+          tambahFoto(fotoTambahan);
+        }
+      } catch (e) {
+        debugPrint('Gagal membaca image_urls: $e');
+        tambahFoto(fotoTambahan);
+      }
+    }
+
+    final String? imageUrl = semuaFoto.isEmpty ? null : semuaFoto.first;
+
     return _newsCard(
       category: category,
       title: title,
@@ -350,15 +433,49 @@ class _NewsScreenState extends State<NewsScreen> {
       source: source,
       icon: Icons.article_outlined,
       color: _green,
-      onTap: () => _showDetails(
-        title: title,
-        category: category,
-        summary: summary,
-        content: content,
-        location: location,
-        date: date,
-        source: source,
-        sourceUrl: sourceUrl,
+      imageUrl: imageUrl,
+      onTap: () {
+        _openDetail(
+          title: title,
+          category: category,
+          summary: summary,
+          content: content,
+          location: location,
+          date: date,
+          source: source,
+          sourceUrl: sourceUrl,
+          imageUrls: semuaFoto,
+        );
+      },
+    );
+  }
+
+  // Membuka halaman detail berita yang baru.
+  void _openDetail({
+    required String title,
+    required String category,
+    required String summary,
+    required String content,
+    required String location,
+    required String date,
+    required String source,
+    required List<String> imageUrls,
+    String? sourceUrl,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DetailBeritaScreen(
+          title: title,
+          category: category,
+          summary: summary,
+          content: content,
+          location: location,
+          date: date,
+          source: source,
+          sourceUrl: sourceUrl,
+          imageUrls: imageUrls,
+        ),
       ),
     );
   }
@@ -373,6 +490,7 @@ class _NewsScreenState extends State<NewsScreen> {
     required IconData icon,
     required Color color,
     required VoidCallback onTap,
+    String? imageUrl,
   }) {
     return Card(
       color: Colors.white,
@@ -409,6 +527,11 @@ class _NewsScreenState extends State<NewsScreen> {
                     color: Colors.black38,
                   ),
                 ],
+              ),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: _buildNewsImage(imageUrl),
               ),
               const SizedBox(height: 12),
               Text(
@@ -461,18 +584,162 @@ class _NewsScreenState extends State<NewsScreen> {
                   fontSize: 11,
                 ),
               ),
-              const SizedBox(height: 8),
-              const Text(
-                'Baca selengkapnya',
-                style: TextStyle(
-                  color: _green,
-                  fontWeight: FontWeight.w800,
-                ),
+              const SizedBox(height: 12),
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(
+                    'Baca selengkapnya',
+                    style: TextStyle(
+                      color: _green,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(width: 6),
+                  Icon(
+                    Icons.arrow_forward,
+                    color: _green,
+                    size: 18,
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Future<String?> _resolveNewsImageUrl(dynamic nilai) async {
+    if (nilai == null || nilai.toString().trim().isEmpty) {
+      return null;
+    }
+
+    String path = nilai.toString().trim();
+    final uri = Uri.tryParse(path);
+
+    // URL eksternal langsung digunakan.
+    if (uri != null &&
+        (uri.scheme == 'https' || uri.scheme == 'http') &&
+        uri.host.isNotEmpty) {
+      final bagian = uri.pathSegments;
+      final posisiBucket = bagian.indexOf('report-photos');
+
+      if (posisiBucket == -1) {
+        return path;
+      }
+
+      if (posisiBucket + 1 >= bagian.length) {
+        return null;
+      }
+
+      path = bagian.skip(posisiBucket + 1).join('/');
+    }
+
+    path = path.replaceFirst(RegExp(r'^/+'), '');
+
+    if (path.startsWith('report-photos/')) {
+      path = path.substring('report-photos/'.length);
+    }
+
+    try {
+      return await _db.storage
+          .from('report-photos')
+          .createSignedUrl(path, 3600);
+    } catch (e) {
+      debugPrint('Gagal membuat URL foto berita: $e');
+
+      try {
+        return _db.storage.from('report-photos').getPublicUrl(path);
+      } catch (error) {
+        debugPrint('Gagal mengambil URL publik: $error');
+        return null;
+      }
+    }
+  }
+
+  Widget _buildNewsImage(
+    String? imageUrl, {
+    double height = 180,
+  }) {
+    Widget placeholder() {
+      return Container(
+        height: height,
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFFE5EDE4),
+              Color(0xFFF7F5EF),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.health_and_safety_outlined,
+              size: 42,
+              color: _green,
+            ),
+            SizedBox(height: 8),
+            Text(
+              'ResQ',
+              style: TextStyle(
+                color: _darkGreen,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Informasi dan Penanganan Bencana',
+              style: TextStyle(
+                color: Colors.black54,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (imageUrl == null || imageUrl.trim().isEmpty) {
+      return placeholder();
+    }
+
+    return FutureBuilder<String?>(
+      future: _resolveNewsImageUrl(imageUrl),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return SizedBox(
+            height: height,
+            width: double.infinity,
+            child: const Center(
+              child: CircularProgressIndicator(color: _green),
+            ),
+          );
+        }
+
+        final url = snapshot.data;
+
+        if (url == null || url.isEmpty) {
+          return placeholder();
+        }
+
+        return Image.network(
+          url,
+          height: height,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Foto berita gagal dimuat: $error');
+            return placeholder();
+          },
+        );
+      },
     );
   }
 
@@ -545,7 +812,8 @@ class _NewsScreenState extends State<NewsScreen> {
     return const Padding(
       padding: EdgeInsets.only(top: 8),
       child: Text(
-        'Sumber resmi gempa: BMKG. Informasi resmi tetap menjadi acuan; periksa kanal otoritas untuk pembaruan dan instruksi darurat.',
+        'Sumber resmi gempa: BMKG. Informasi resmi tetap menjadi acuan; '
+        'periksa kanal otoritas untuk pembaruan dan instruksi darurat.',
         textAlign: TextAlign.center,
         style: TextStyle(
           color: Colors.black45,
@@ -553,107 +821,6 @@ class _NewsScreenState extends State<NewsScreen> {
           height: 1.5,
         ),
       ),
-    );
-  }
-
-  void _showDetails({
-    required String title,
-    required String category,
-    required String summary,
-    required String content,
-    required String location,
-    required String date,
-    required String source,
-    String? sourceUrl,
-  }) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: _background,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(24),
-        ),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  category.toUpperCase(),
-                  style: const TextStyle(
-                    color: _green,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: _darkGreen,
-                    fontSize: 23,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '$location\n$date\nSumber: $source',
-                  style: const TextStyle(
-                    color: Colors.black54,
-                    height: 1.6,
-                  ),
-                ),
-                const Divider(height: 28),
-                Text(
-                  content.isEmpty ? summary : content,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    height: 1.7,
-                    color: Color(0xFF333333),
-                  ),
-                ),
-                if (sourceUrl != null && sourceUrl.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  SelectableText(
-                    'Sumber informasi: $sourceUrl',
-                    style: const TextStyle(
-                      color: _green,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _darkGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: const Text('Tutup'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }
